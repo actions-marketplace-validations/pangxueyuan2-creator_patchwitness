@@ -7,19 +7,53 @@ uses semantic versioning once the v1 compatibility contract is reached.
 
 ### Fixed
 
+- Distinguish completed SARIF analysis from policy approval: failed gate results
+  keep their findings and explicit `gateStatus`, instead of being labeled as
+  tool execution failures. Gate decisions and evidence digests are unchanged;
+  see [consumer migration](docs/sarif-paths.md#analysis-completion-is-not-gate-approval-unreleased).
+- Reject mistyped TOML policy values before legacy coercion can widen permissions
+  or execute checks. Quoted booleans, scalar path lists and invalid known field
+  types now cause configuration errors; see [migration notes](docs/contracts.md).
+- Preserve clean-room patch paths regardless of Git diff prefix settings, preventing
+  checks from running against stale nested files or failing on custom prefixes. See
+  [compatibility notes](docs/clean-room-patch-paths.md).
+- Apply segment glob semantics to wildcard directory prefixes in allow, deny and protected paths; keep literal-directory behavior and check both rename paths. Existing v0.3.0 users of these patterns should use explicit literal directories until upgrading and then re-run prior checks; see [pattern semantics](docs/rules.md#path-pattern-semantics).
+- Avoid recursion-limit failures in glob matching for deeply nested paths or repeated recursive pattern segments.
+
+## [0.3.0] - 2026-09-16
+
+### Changed
+
+- Made check execution non-interactive and bounded stdout/stderr capture to 1 MiB per stream. Output overflow, incomplete pipe capture and deadline failures cannot produce a passing check or a truncated success hash.
+- Required regular UTF-8 JSON Evidence v1 files within 16 MiB; see [upgrade notes](docs/release-notes/v0.3.0.md) for compatibility and cleanup boundaries.
+
+### Fixed
+
+- Enforced Safe Delivery and TaskToPR byte budgets during reads, including concurrent file growth, and rejected observed handoff identity replacement even when size and mtime remain unchanged.
+- Bound evidence-file reads to 16 MiB, reject duplicate/non-finite JSON and non-regular files, and detect observed replacement or mutation during reading before offline verification.
 - Reject ambiguous index/working-tree content with PW033 before checks, preventing a passing live or clean-room test from being attached to a different staged change.
 - Recheck recorded source changes after clean-room checks and reject HEAD/branch movement while retaining the initially observed repository identity in evidence.
-- Preserved the advisory Copilot CLI PowerShell hook’s documented zero exit status when it is invoked by a strict PowerShell caller, while continuing to write its status to stderr.
-- Excluded local virtual environments and generated build directories from source distributions, so contributors can build release artifacts from a working tree without packaging absolute virtual-environment links.
 - Hardened policy path matching so directory patterns (`src/`, `src/**`), trailing slashes, and nested prefix cases behave consistently and deterministically.
 
 ### Added
 
+- Added a portable release preflight for Windows and POSIX, with isolated wheel and source-distribution consumer checks for scoped changes, protected workflow rejection, and Passport integrity.
 - Added exact-subject Safe Delivery composition with pinned producer identities, strict decision/schema verification, SARIF and a content-addressed receipt.
 - Added bounded Git-object materialization and a local nine-component fixture demonstration; incomplete runtime, publication, CI and review evidence never becomes an automatic release approval.
-- Added a Windows-only regression test that runs the published PowerShell hook against a synthetic Git change and verifies the generated Change Passport.
+- Added a Safe Delivery CLI consuming pinned TaskToPR v1/v2 execution handoffs, with optional reviewer-enforced plan approval and producer version/schema requirements.
 - Added regression tests for directory patterns, trailing-slash directory forms, exact-path vs nested-prefix matching, and protected directory trees.
 - Added a regression ensuring smart scan on a single-commit (or parent-less) repository falls back to `HEAD` without an opaque failure.
+
+## [0.2.2] - 2026-08-14
+
+### Fixed
+
+- Preserved the advisory Copilot CLI PowerShell hook’s documented zero exit status under strict PowerShell callers while retaining stderr diagnostics.
+- Excluded local virtual environments and generated build directories from source distributions.
+
+### Added
+
+- Added Windows regression coverage for the direct published PowerShell hook and offline verification of its generated Passport.
 
 ### Security
 

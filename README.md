@@ -37,15 +37,15 @@ No package install needed. See the [demo README](demo/README.md) and the committ
 Structural scan only (no code execution):
 
 ```bash
-uvx --from "https://github.com/pangxueyuan2-creator/patchwitness/releases/download/v0.2.2/patchwitness-0.2.2-py3-none-any.whl" patchwitness scan --no-checks
+uvx --from "https://github.com/pangxueyuan2-creator/patchwitness/releases/download/v0.3.0/patchwitness-0.3.0-py3-none-any.whl" patchwitness scan --no-checks
 ```
 
 Or install once:
 
 ```bash
-pipx install "https://github.com/pangxueyuan2-creator/patchwitness/releases/download/v0.2.2/patchwitness-0.2.2-py3-none-any.whl"
+pipx install "https://github.com/pangxueyuan2-creator/patchwitness/releases/download/v0.3.0/patchwitness-0.3.0-py3-none-any.whl"
 # or
-uv tool install "https://github.com/pangxueyuan2-creator/patchwitness/releases/download/v0.2.2/patchwitness-0.2.2-py3-none-any.whl"
+uv tool install "https://github.com/pangxueyuan2-creator/patchwitness/releases/download/v0.3.0/patchwitness-0.3.0-py3-none-any.whl"
 ```
 
 Then inside any Git repo:
@@ -71,6 +71,8 @@ patchwitness scan --no-checks # structural only
 A green passport does **not** mean the code is correct. It only means the recorded scope, policy, checks, and integrity claims hold.
 
 ## Setting up a policy
+
+Use [typed TOML policy values](docs/contracts.md). The unreleased strict loader rejects quoted booleans and scalar path lists instead of coercing them.
 
 ```bash
 patchwitness init
@@ -101,6 +103,9 @@ patchwitness mcp --root .
 
 Exit codes: `0` pass, `1` gate failure, `2` usage/runtime error.
 
+Checks capture at most 1 MiB per output stream and fail on overflow or timeout.
+See [check execution limits](docs/check-execution.md) for diagnostics and cleanup boundaries.
+
 ## Related tools
 
 These answer different questions and do not depend on each other:
@@ -117,8 +122,11 @@ a content-addressed receipt. Its local nine-component fixture demo preserves
 
 ## Status
 
-Public alpha (v0.2.x). Evidence schema v1 is stable.  
+Public alpha (v0.3.x). Evidence schema v1 is stable.
 Single maintainer. No production claims.
+
+Upgrading from v0.2.2? Read the [v0.3.0 migration notes](docs/release-notes/v0.3.0.md),
+especially the new check-output and evidence-input limits.
 
 Limitations are listed in [PROJECT_STATUS.md](PROJECT_STATUS.md) and the [threat model](docs/threat-model.md). The important ones:
 

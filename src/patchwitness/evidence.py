@@ -5,8 +5,10 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import math
 import os
 import platform
+import subprocess
 import tempfile
 from contextlib import suppress
 from datetime import UTC, datetime
@@ -17,6 +19,7 @@ from patchwitness import git
 from patchwitness._version import __version__
 from patchwitness.checks import run_checks
 from patchwitness.cleanroom import clean_room
+from patchwitness.file_input import FileInputError, read_regular_file
 from patchwitness.impact import analyze_impact
 from patchwitness.models import Contract, EvidencePack, FileChange, Finding, GateStatus, Severity
 from patchwitness.plugins import AnalyzerContext, run_analyzers
@@ -24,6 +27,7 @@ from patchwitness.policy import evaluate_policy
 from patchwitness.security import scan_changed_files
 
 SCHEMA_VERSION = "patchwitness.dev/evidence/v1"
+MAX_EVIDENCE_BYTES = 16 * 1024 * 1024
 
 
 class EvidenceError(ValueError):
@@ -85,12 +89,14 @@ def capture_evidence(
     )
     if execute_checks:
         current_changes = git.collect_changes(repository, base_revision)
-        for drifted in _drifted_paths(changes, current_changes):
+        for drifted in _drifted_paths(
+            changes, current_changes, tracked_paths=_tracked_paths(repository)
+        ):
             findings += (
                 Finding(
                     "PW032",
                     Severity.ERROR,
-                    "recorded change moved while checks were running; refusing stale evidence",
+                    "change scope or content moved during checks; refusing stale evidence",
                     drifted,
                 ),
             )
@@ -159,14 +165,18 @@ def capture_evidence(
 
 
 def _drifted_paths(
-    recorded: tuple[FileChange, ...], current: tuple[FileChange, ...]
+    recorded: tuple[FileChange, ...],
+    current: tuple[FileChange, ...],
+    *,
+    tracked_paths: frozenset[str],
 ) -> tuple[str, ...]:
-    """Return recorded paths whose commit-relevant state moved during verification.
+    """Find recorded content drift and newly changed tracked/index paths.
 
-    Checks commonly create new untracked build/test artifacts (for example
-    ``__pycache__``) that were never part of the captured change. Those do not
-    make the already-recorded evidence stale. A recorded path disappearing,
-    changing content/status, or changing rename provenance does.
+    Newly generated untracked artifacts remain outside the recorded scope.
+    FileChange uses "A" for both untracked and staged additions, so status
+    alone cannot grant that exception: index membership must be checked.
+    Deletions and renames also expand scope even if their old paths are no
+    longer in the index. Previously recorded paths never get the exception.
     """
 
     def fingerprint(change: FileChange) -> tuple[str, str | None, str | None, str | None]:
@@ -179,13 +189,38 @@ def _drifted_paths(
 
     recorded_by_path = {change.path: fingerprint(change) for change in recorded}
     current_by_path = {change.path: fingerprint(change) for change in current}
-    return tuple(
-        sorted(
-            path
-            for path, recorded_fingerprint in recorded_by_path.items()
-            if current_by_path.get(path) != recorded_fingerprint
-        )
+    drifted = {
+        path
+        for path, recorded_fingerprint in recorded_by_path.items()
+        if current_by_path.get(path) != recorded_fingerprint
+    }
+    drifted.update(
+        change.path
+        for change in current
+        if change.path not in recorded_by_path
+        and (change.status != "A" or change.path in tracked_paths)
     )
+    return tuple(sorted(drifted))
+
+
+def _tracked_paths(root: Path) -> frozenset[str]:
+    """Read index membership without treating Git failure as an untracked path."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "--cached", "-z"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise git.GitError("cannot enumerate tracked paths after checks") from exc
+    if result.returncode != 0 or (result.stdout and not result.stdout.endswith("\0")):
+        raise git.GitError("cannot enumerate tracked paths after checks")
+    # Match the Git adapter's existing path representation without whitespace stripping.
+    return frozenset(path.replace("\\", "/") for path in result.stdout.split("\0") if path)
 
 
 def verify_evidence(pack: EvidencePack | dict[str, Any]) -> EvidencePack:
@@ -200,11 +235,41 @@ def verify_evidence(pack: EvidencePack | dict[str, Any]) -> EvidencePack:
     return evidence
 
 
+def _read_evidence(path: Path) -> bytes:
+    try:
+        return read_regular_file(path, max_bytes=MAX_EVIDENCE_BYTES, label="evidence")
+    except FileInputError as exc:
+        raise EvidenceError(str(exc)) from exc
+
+
+def _unique_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise EvidenceError("evidence contains a duplicate JSON key")
+        result[key] = value
+    return result
+
+
+def _finite_number(value: str) -> float:
+    number = float(value)
+    if not math.isfinite(number):
+        raise EvidenceError("evidence contains a non-finite JSON number")
+    return number
+
+
 def load_evidence(path: Path) -> EvidencePack:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise EvidenceError(f"cannot load evidence {path}: {exc}") from exc
+        value = json.loads(
+            _read_evidence(path).decode("utf-8"),
+            object_pairs_hook=_unique_keys,
+            parse_constant=_finite_number,
+            parse_float=_finite_number,
+        )
+    except EvidenceError:
+        raise
+    except (OSError, UnicodeError, ValueError, RecursionError) as exc:
+        raise EvidenceError("cannot load evidence: unreadable or invalid UTF-8 JSON") from exc
     if not isinstance(value, dict):
         raise EvidenceError(f"invalid evidence {path}: root must be an object")
     try:
